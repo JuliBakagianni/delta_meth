@@ -1,0 +1,19 @@
+# Configuration for models and thresholds used by the pipeline
+
+# Sentence-transformers model for multilingual embeddings (suitable for Greek)
+embedding_model: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+
+# NLI model for multilingual contradiction detection (XNLI)
+nli_model: joeddav/xlm-roberta-large-xnli
+
+# Chunking parameters
+chunk_size: 150
+
+# Similarity threshold (cosine) to produce candidate aligned pairs
+similarity_threshold: 0.5
+
+# NLI confidence threshold to accept a contradiction
+nli_threshold: 0.7
+
+# Optional: LLM for later classification (kept as placeholder)
+llm_model: openai/gpt-4o-mini

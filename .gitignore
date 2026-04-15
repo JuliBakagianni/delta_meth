@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+
+# Virtual environments
+venv/
+.venv/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Results and runtime artifacts
+results/
+run_output.log
+
+# IDE files
+.vscode/
+.idea/
+
+# Env files
+.env
+*.env
+
+# Notebook checkpoints
+notebooks/*.py
+venv/
+__pycache__/
+*.pyc
+results/
+run_output.log
+.DS_Store
+.ipynb_checkpoints/
+/.idea/
+.vscode/
+
+# Python packaging
+dist/
+build/
+*.egg-info/
+
+# Data
+data/processed/
+data/pairs/
