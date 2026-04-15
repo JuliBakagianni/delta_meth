@@ -1,41 +1,65 @@
 from typing import Tuple, Dict
-from transformers import pipeline
+import torch
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
 
-_pipelines: Dict[str, object] = {}
+_models: Dict[str, Dict] = {}
 
 
-def _get_pipeline(model_name: str):
+def _load_model(model_name: str, device: str = None):
     if not model_name:
-        raise ValueError("model_name must be provided to _get_pipeline")
-    if model_name not in _pipelines:
-        _pipelines[model_name] = pipeline("text-classification", model=model_name, return_all_scores=False)
-    return _pipelines[model_name]
+        raise ValueError("model_name must be provided to load model")
+    if model_name in _models:
+        return _models[model_name]
+    device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    model = AutoModelForSequenceClassification.from_pretrained(model_name).to(device)
+    id2label = getattr(model.config, "id2label", None) or {}
+    _models[model_name] = {"tokenizer": tokenizer, "model": model, "device": device, "id2label": id2label}
+    return _models[model_name]
 
 
 def predict_nli(premise: str, hypothesis: str, model_name: str) -> Tuple[str, float]:
     """
-    Predict NLI label and confidence for a single premise-hypothesis pair.
+    Predict NLI label and confidence using HF AutoModelForSequenceClassification.
 
-    Args:
-        premise: The premise text.
-        hypothesis: The hypothesis text.
-        model_name: HF model name for the XNLI model.
+    Tokenization uses `padding=True` and `truncation=True` to ensure batched
+    tensors have consistent lengths and avoid the tensor creation error.
 
-    Returns:
-        A tuple `(label, confidence)` where `label` is a lower-case string
-        (e.g. "contradiction", "entailment", "neutral") and `confidence` is
-        the softmax score for that label.
-
-    Note: `model_name` must be provided by the caller (from config).
+    Returns `(label, confidence)` where `label` is lower-cased.
     """
-    nlp = _get_pipeline(model_name)
-    # Pipe accepts a tuple (premise, hypothesis) for pair classification
-    out = nlp((premise, hypothesis))
-    if isinstance(out, list) and out:
-        res = out[0]
+    m = _load_model(model_name)
+    tokenizer = m["tokenizer"]
+    model = m["model"]
+    device = m["device"]
+
+    # Ensure inputs are strings
+    premise = "" if premise is None else str(premise)
+    hypothesis = "" if hypothesis is None else str(hypothesis)
+
+    # Tokenize with padding/truncation to produce tensors of equal length
+    inputs = tokenizer(premise, hypothesis, padding=True, truncation=True, return_tensors="pt")
+    inputs = {k: v.to(device) for k, v in inputs.items()}
+
+    with torch.no_grad():
+        outputs = model(**inputs)
+        logits = outputs.logits
+        probs = torch.softmax(logits, dim=-1).cpu().numpy()[0]
+
+    # Map predicted index to label
+    pred_idx = int(probs.argmax())
+    id2label = m.get("id2label") or {}
+    label = id2label.get(pred_idx, str(pred_idx)).lower()
+    # Normalize common label variants
+    if label in ("contradiction", "contradictory"):
+        norm_label = "contradiction"
+    elif label == "entailment":
+        norm_label = "entailment"
+    elif label == "neutral":
+        norm_label = "neutral"
     else:
-        res = out
-    label = res["label"].lower()
-    score = float(res["score"])
-    return label, score
+        # Some models use different words like 'contradiction' may be 'Contradiction'
+        norm_label = label.lower()
+
+    confidence = float(probs[pred_idx])
+    return norm_label, confidence
