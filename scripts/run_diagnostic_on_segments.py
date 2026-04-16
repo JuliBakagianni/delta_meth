@@ -25,20 +25,44 @@ def process_json_file(in_path: Path, out_dir: Path, config_path: Optional[str] =
     note_id = data.get('note_id', in_path.stem)
     segments = data.get('segments', [])
 
+    # If single segment, rename 'before_ICU' -> 'ICU_summ' and save the processed JSON
     if len(segments) <= 1:
+        if segments:
+            if segments[0].get('date') == 'before_ICU':
+                segments[0]['date'] = 'ICU_summ'
+                data['segments'] = segments
+                # overwrite the processed JSON so downstream runs use the new label
+                in_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
         out = {'note_id': note_id, 'skipped': True, 'reason': 'single_segment', 'comparisons': []}
         out_path = out_dir / (in_path.stem + '.diagnostic_shifts.json')
         out_path.write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding='utf-8')
         return out
 
+    # Filter out empty segments (skip them from context)
+    skipped_empty = []
+    filtered = []  # list of tuples (orig_index, segment)
+    for idx, seg in enumerate(segments):
+        if not seg.get('text', '').strip():
+            skipped_empty.append({'orig_index': idx, 'date': seg.get('date')})
+        else:
+            filtered.append((idx, seg))
+
+    if len(filtered) <= 1:
+        out = {'note_id': note_id, 'skipped': True, 'reason': 'single_segment_after_filter', 'skipped_empty_segments': skipped_empty, 'comparisons': []}
+        out_path = out_dir / (in_path.stem + '.diagnostic_shifts.json')
+        out_path.write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding='utf-8')
+        return out
+
     comparisons = []
-    for i in range(len(segments) - 1):
-        a = segments[i]
-        b = segments[i + 1]
+    for k in range(len(filtered) - 1):
+        i, a = filtered[k]
+        j, b = filtered[k + 1]
         seg_meta = {
-            'i': i,
+            'i': k,
+            'orig_i': i,
             'i_date': a.get('date'),
-            'j': i + 1,
+            'j': k + 1,
+            'orig_j': j,
             'j_date': b.get('date'),
         }
         text_a = a.get('text', '')
@@ -57,7 +81,7 @@ def process_json_file(in_path: Path, out_dir: Path, config_path: Optional[str] =
         except Exception as e:
             comparisons.append({**seg_meta, 'error': str(e)})
 
-    out = {'note_id': note_id, 'skipped': False, 'comparisons': comparisons}
+    out = {'note_id': note_id, 'skipped': False, 'skipped_empty_segments': skipped_empty, 'comparisons': comparisons}
     out_path = out_dir / (in_path.stem + '.diagnostic_shifts.json')
     out_path.write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding='utf-8')
     return out
