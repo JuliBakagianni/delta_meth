@@ -44,7 +44,15 @@ def process_json_file(in_path: Path, out_dir: Path, config_path: Optional[str] =
         text_a = a.get('text', '')
         text_b = b.get('text', '')
         try:
-            contradiction, detailed_pairs = run_pipeline(note_a=text_a, note_b=text_b, config_path=(config_path or 'configs/config.yaml'), verbose=False)
+            # Use sentence-level chunking: one sentence per chunk for finer comparisons
+            contradiction, detailed_pairs = run_pipeline(
+                note_a=text_a,
+                note_b=text_b,
+                config_path=(config_path or 'configs/config.yaml'),
+                verbose=False,
+                chunk_unit='sentences',
+                chunk_size=1,
+            )
             comparisons.append({**seg_meta, 'contradiction': contradiction, 'detailed_pairs': detailed_pairs})
         except Exception as e:
             comparisons.append({**seg_meta, 'error': str(e)})
