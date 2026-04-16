@@ -1,5 +1,5 @@
 from typing import List, Tuple, Dict, Optional
-from .nli_model import predict_nli
+from .nli_model import predict_nli, predict_nli_batch
 
 
 def filter_contradictions(aligned_pairs: List[Tuple[int, int, float, str, str]], threshold: float = 0.7, nli_model_name: str = None) -> Optional[Dict]:
@@ -19,8 +19,16 @@ def filter_contradictions(aligned_pairs: List[Tuple[int, int, float, str, str]],
     if not nli_model_name:
         raise ValueError("nli_model_name must be provided to filter_contradictions")
 
-    for (i, j, sim_score, chunk1, chunk2) in aligned_pairs:
-        label, conf = predict_nli(chunk1, chunk2, nli_model_name)
+    if not aligned_pairs:
+        return None
+
+    # Batch NLI predictions for all aligned pairs to avoid repeated model calls
+    premises = [pair[3] for pair in aligned_pairs]
+    hypotheses = [pair[4] for pair in aligned_pairs]
+    results = predict_nli_batch(premises, hypotheses, nli_model_name)
+
+    for (pair, (label, conf)) in zip(aligned_pairs, results):
+        i, j, sim_score, chunk1, chunk2 = pair
         if label == "contradiction" and conf >= threshold:
             candidate = {
                 "i": i,

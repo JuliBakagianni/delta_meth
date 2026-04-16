@@ -45,8 +45,10 @@ def encode_chunks(chunks: List[str], model_name: str, max_length: int = 256, dev
 
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
 
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    model = AutoModel.from_pretrained(model_name).to(device)
+    # Load cached tokenizer/model (loads once per model_name)
+    loaded = _load_embedding_model(model_name, device=device)
+    tokenizer = loaded["tokenizer"]
+    model = loaded["model"]
 
     # Tokenize with padding and truncation to ensure batched tensors have same length
     encoded = tokenizer(proc_chunks, padding=True, truncation=True, max_length=max_length, return_tensors="pt")
@@ -60,3 +62,27 @@ def encode_chunks(chunks: List[str], model_name: str, max_length: int = 256, dev
         sentence_embeddings = _mean_pooling(token_embeddings, attention_mask)
 
     return sentence_embeddings.cpu().numpy()
+
+
+# Simple module-level cache to avoid reloading embedding models/tokenizers repeatedly
+_embed_models = {}
+
+
+def _load_embedding_model(model_name: str, device: str = None):
+    """Load and cache the tokenizer and model for embeddings.
+
+    Returns a dict with keys: `tokenizer`, `model`, `device`.
+    """
+    if not model_name:
+        raise ValueError("model_name must be provided to load embedding model")
+    if model_name in _embed_models:
+        return _embed_models[model_name]
+
+    device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    model = AutoModel.from_pretrained(model_name).to(device)
+    model.eval()
+
+    _embed_models[model_name] = {"tokenizer": tokenizer, "model": model, "device": device}
+    return _embed_models[model_name]
+

@@ -63,3 +63,49 @@ def predict_nli(premise: str, hypothesis: str, model_name: str) -> Tuple[str, fl
 
     confidence = float(probs[pred_idx])
     return norm_label, confidence
+
+
+def predict_nli_batch(premises, hypotheses, model_name: str, batch_size: int = 32):
+    """Batch NLI predictions for lists of (premise, hypothesis) pairs.
+
+    Returns a list of (label, confidence) tuples in the same order.
+    """
+    if len(premises) != len(hypotheses):
+        raise ValueError("premises and hypotheses must have the same length")
+
+    m = _load_model(model_name)
+    tokenizer = m["tokenizer"]
+    model = m["model"]
+    device = m["device"]
+
+    results = []
+    n = len(premises)
+    for start in range(0, n, batch_size):
+        end = min(n, start + batch_size)
+        batch_p = ["" if x is None else str(x) for x in premises[start:end]]
+        batch_h = ["" if x is None else str(x) for x in hypotheses[start:end]]
+
+        inputs = tokenizer(batch_p, batch_h, padding=True, truncation=True, return_tensors="pt")
+        inputs = {k: v.to(device) for k, v in inputs.items()}
+
+        with torch.no_grad():
+            outputs = model(**inputs)
+            logits = outputs.logits
+            probs = torch.softmax(logits, dim=-1).cpu().numpy()
+
+        id2label = m.get("id2label") or {}
+        for prob in probs:
+            pred_idx = int(prob.argmax())
+            label = id2label.get(pred_idx, str(pred_idx)).lower()
+            if label in ("contradiction", "contradictory"):
+                norm_label = "contradiction"
+            elif label == "entailment":
+                norm_label = "entailment"
+            elif label == "neutral":
+                norm_label = "neutral"
+            else:
+                norm_label = label.lower()
+            confidence = float(prob[pred_idx])
+            results.append((norm_label, confidence))
+
+    return results

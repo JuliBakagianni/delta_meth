@@ -11,7 +11,7 @@ from src.preprocessing.chunking import chunk_notes
 from src.alignment.embeddings import encode_chunks
 from src.alignment.similarity import compute_similarity_matrix, get_aligned_pairs
 from src.nli.filtering import filter_contradictions
-from src.nli.nli_model import predict_nli
+from src.nli.nli_model import predict_nli, predict_nli_batch
 
 
 def run_pipeline(note_a: Optional[str] = None, note_b: Optional[str] = None,
@@ -75,29 +75,34 @@ def run_pipeline(note_a: Optional[str] = None, note_b: Optional[str] = None,
     aligned = get_aligned_pairs(chunks_a, chunks_b, sim_mat, threshold=sim_threshold)
     print(f"[pipeline] aligned candidate pairs (sim>={sim_threshold}): {len(aligned)}")
 
-    # For debugging: run NLI on each aligned candidate and show labels
+    # For debugging: run batched NLI on all aligned candidates and show labels
     detailed_pairs = []
-    for (i, j, sim_score, chunk1, chunk2) in aligned:
+    if aligned:
+        premises = [p[3] for p in aligned]
+        hypotheses = [p[4] for p in aligned]
         try:
-            label, conf = predict_nli(chunk1, chunk2, nli_model)
+            nli_results = predict_nli_batch(premises, hypotheses, nli_model)
         except Exception as e:
-            label, conf = "error", 0.0
+            # Fallback: try single predictions to preserve behavior
             if verbose:
-                print(f"[pipeline] NLI error for pair ({i},{j}): {e}")
-        entry = {
-            "i": i,
-            "j": j,
-            "sim_score": sim_score,
-            "nli_label": label,
-            "nli_confidence": conf,
-            "chunk1": chunk1,
-            "chunk2": chunk2,
-        }
-        detailed_pairs.append(entry)
-        if verbose:
-            print(f"[pipeline] pair ({i},{j}) sim={sim_score:.3f} nli={label} ({conf:.3f})")
-            print(f"  A: {chunk1}")
-            print(f"  B: {chunk2}")
+                print(f"[pipeline] batched NLI failed: {e}, falling back to single predictions")
+            nli_results = [predict_nli(p[3], p[4], nli_model) for p in aligned]
+
+        for (i, j, sim_score, chunk1, chunk2), (label, conf) in zip(aligned, nli_results):
+            entry = {
+                "i": i,
+                "j": j,
+                "sim_score": sim_score,
+                "nli_label": label,
+                "nli_confidence": conf,
+                "chunk1": chunk1,
+                "chunk2": chunk2,
+            }
+            detailed_pairs.append(entry)
+            if verbose:
+                print(f"[pipeline] pair ({i},{j}) sim={sim_score:.3f} nli={label} ({conf:.3f})")
+                print(f"  A: {chunk1}")
+                print(f"  B: {chunk2}")
 
     # NLI filtering (select highest-confidence contradiction)
     contradiction = filter_contradictions(aligned, threshold=nli_threshold, nli_model_name=nli_model)
