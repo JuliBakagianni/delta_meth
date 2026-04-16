@@ -41,4 +41,5 @@ build/
 
 # Data
 data/processed/
+data/raw/
 data/pairs/
