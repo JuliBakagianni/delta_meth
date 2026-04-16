@@ -15,7 +15,8 @@ from src.nli.nli_model import predict_nli
 
 
 def run_pipeline(note_a: Optional[str] = None, note_b: Optional[str] = None,
-                 config_path: str = "configs/config.yaml", verbose: bool = True):
+                 config_path: str = "configs/config.yaml", verbose: bool = True,
+                 chunk_unit: str = 'words', chunk_size: Optional[int] = None):
     """
     Orchestrate chunking, embedding, alignment, and NLI-based filtering.
 
@@ -39,7 +40,9 @@ def run_pipeline(note_a: Optional[str] = None, note_b: Optional[str] = None,
     # Defaults from config
     sim_threshold = cfg.get("similarity_threshold", 0.5)
     nli_threshold = cfg.get("nli_threshold", 0.7)
-    chunk_size = cfg.get("chunk_size", 150)
+    default_chunk_size = cfg.get("chunk_size", 150)
+    if chunk_size is None:
+        chunk_size = default_chunk_size
     embedding_model = cfg.get("embedding_model")
     nli_model = cfg.get("nli_model")
 
@@ -58,8 +61,8 @@ def run_pipeline(note_a: Optional[str] = None, note_b: Optional[str] = None,
         )
 
     # Chunking
-    chunks_a = chunk_notes(note_a, chunk_size=chunk_size)
-    chunks_b = chunk_notes(note_b, chunk_size=chunk_size)
+    chunks_a = chunk_notes(note_a, chunk_size=chunk_size, chunk_unit=chunk_unit)
+    chunks_b = chunk_notes(note_b, chunk_size=chunk_size, chunk_unit=chunk_unit)
     print(f"[pipeline] note A -> {len(chunks_a)} chunks")
     print(f"[pipeline] note B -> {len(chunks_b)} chunks")
 

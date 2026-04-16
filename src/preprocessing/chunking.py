@@ -1,7 +1,8 @@
 from typing import List
+import re
 
 
-def chunk_notes(text: str, chunk_size: int = 150) -> List[str]:
+def chunk_notes(text: str, chunk_size: int = 150, chunk_unit: str = 'words') -> List[str]:
     """
     Split a single note text into non-overlapping chunks of approximately
     `chunk_size` words.
@@ -20,9 +21,26 @@ def chunk_notes(text: str, chunk_size: int = 150) -> List[str]:
     if not text:
         return []
 
-    words = text.split()
-    chunks: List[str] = []
-    for i in range(0, len(words), chunk_size):
-        chunk = " ".join(words[i : i + chunk_size])
-        chunks.append(chunk.strip())
-    return chunks
+    if chunk_unit == 'words':
+        words = text.split()
+        chunks: List[str] = []
+        for i in range(0, len(words), chunk_size):
+            chunk = " ".join(words[i : i + chunk_size])
+            chunks.append(chunk.strip())
+        return chunks
+
+    # sentence-level chunking
+    if chunk_unit == 'sentences':
+        # simple rule-based sentence splitter that works reasonably for clinical notes
+        parts = [s.strip() for s in re.split(r"[.!?]+(?=\s|$)", text) if s.strip()]
+        if chunk_size <= 1:
+            # one sentence per chunk
+            return parts
+        chunks = []
+        for i in range(0, len(parts), chunk_size):
+            chunk = " ".join(parts[i : i + chunk_size])
+            chunks.append(chunk.strip())
+        return chunks
+
+    # unknown unit: fallback to word-based
+    return chunk_notes(text, chunk_size=chunk_size, chunk_unit='words')
