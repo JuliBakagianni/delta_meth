@@ -18,6 +18,7 @@ from typing import Optional
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.pipeline.run_pipeline import run_pipeline
+from src.pipeline.batch_runner import run_batch
 
 
 def process_json_file(in_path: Path, out_dir: Path, config_path: Optional[str] = None):
@@ -88,23 +89,10 @@ def process_json_file(in_path: Path, out_dir: Path, config_path: Optional[str] =
 
 
 def main(src_dir: Optional[str] = None):
-    src = Path(src_dir) if src_dir else Path('data/processed/segments')
-    out_dir = Path('data/results/diagnostic_shifts')
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    files = sorted([p for p in src.glob('*.json') if p.is_file()])
-    summary = {'processed': 0, 'skipped': 0, 'errors': 0, 'files': []}
-    for p in files:
-        try:
-            res = process_json_file(p, out_dir)
-            summary['files'].append({'file': p.name, 'skipped': res.get('skipped', False), 'comparisons': len(res.get('comparisons', []))})
-            summary['processed'] += 1
-            if res.get('skipped'):
-                summary['skipped'] += 1
-        except Exception as e:
-            summary['errors'] += 1
-            summary['files'].append({'file': p.name, 'error': str(e)})
-
+    # Delegate to batch_runner with defaults for local runs. Accepts optional src_dir.
+    seg_dir = src_dir or 'data/processed/segments'
+    processed = run_batch(seg_dir=seg_dir)
+    summary = {'processed': len(processed)}
     print(json.dumps(summary, ensure_ascii=False, indent=2))
 
 

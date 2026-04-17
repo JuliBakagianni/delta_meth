@@ -16,7 +16,10 @@ from src.nli.nli_model import predict_nli, predict_nli_batch
 
 def run_pipeline(note_a: Optional[str] = None, note_b: Optional[str] = None,
                  config_path: str = "configs/config.yaml", verbose: bool = True,
-                 chunk_unit: str = 'words', chunk_size: Optional[int] = None):
+                 chunk_unit: str = 'words', chunk_size: Optional[int] = None,
+                 nli_model_override: Optional[str] = None,
+                 translate_nli: bool = False,
+                 translation_model: Optional[str] = None):
     """
     Orchestrate chunking, embedding, alignment, and NLI-based filtering.
 
@@ -44,7 +47,7 @@ def run_pipeline(note_a: Optional[str] = None, note_b: Optional[str] = None,
     if chunk_size is None:
         chunk_size = default_chunk_size
     embedding_model = cfg.get("embedding_model")
-    nli_model = cfg.get("nli_model")
+    nli_model = nli_model_override or cfg.get("nli_model")
 
     # Dummy examples if none provided
     if note_a is None:
@@ -81,7 +84,9 @@ def run_pipeline(note_a: Optional[str] = None, note_b: Optional[str] = None,
         premises = [p[3] for p in aligned]
         hypotheses = [p[4] for p in aligned]
         try:
-            nli_results = predict_nli_batch(premises, hypotheses, nli_model)
+            nli_results = predict_nli_batch(premises, hypotheses, nli_model,
+                                           translate=translate_nli,
+                                           translation_model=translation_model)
         except Exception as e:
             # Fallback: try single predictions to preserve behavior
             if verbose:
