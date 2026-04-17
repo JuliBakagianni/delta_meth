@@ -86,6 +86,7 @@ def run_batch(
         parts.append(f'seed{sample_seed}')
         subname = '_'.join(parts)
         out_dir = out_dir / subname
+        print(f"auto dir= {auto_subdir}, dir = {out_dir}")
         out_dir.mkdir(parents=True, exist_ok=True)
 
     drive_json_dir = None
@@ -134,6 +135,7 @@ def run_batch(
         _ensure_csv_header(drive_csv_path)
 
     processed = []
+    print(f"Running batch on {len(files)} files (sample_size={sample_size}, process_limit={process_limit})...")
     for p in files:
         try:
             data = json.loads(p.read_text(encoding='utf-8'))
@@ -174,6 +176,7 @@ def run_batch(
 
         comparisons = []
         csv_rows = []
+        print(f"len filtered = {len(filtered)} ")
         for comp_idx in range(len(filtered) - 1):
             orig_i, a_seg = filtered[comp_idx]
             orig_j, b_seg = filtered[comp_idx + 1]
@@ -192,6 +195,7 @@ def run_batch(
                         translation_model=translation_model,
                 )
             except Exception as e:
+                print(f"Exception: {e}")
                 comparisons.append({'comp_idx': comp_idx, 'orig_i': orig_i, 'orig_j': orig_j, 'i_date': a_seg.get('date'), 'j_date': b_seg.get('date'), 'error': str(e), 'contradiction': None, 'detailed_pairs': []})
                 continue
 
