@@ -160,6 +160,103 @@ def export_llm_candidates_csv(results_dir: str, out_csv: str) -> Dict[str, Any]:
     return summary
 
 
+def export_segment_pair_annotation_csv(
+    seg_dir: str,
+    out_csv: str,
+    sample_size: int = 10,
+    sample_seed: int = 42,
+) -> Dict[str, Any]:
+    """Sample notes and export consecutive segment pairs for human annotation."""
+    src = Path(seg_dir)
+    out_path = Path(out_csv)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    all_files = sorted([p for p in src.glob('**/*.json') if p.is_file()])
+    multi_files = []
+    for p in all_files:
+        try:
+            note = json.loads(p.read_text(encoding='utf-8'))
+        except Exception:
+            continue
+        if len(note.get('segments', [])) > 1:
+            multi_files.append(p)
+
+    if sample_size is None or sample_size >= len(multi_files):
+        sampled = multi_files
+    else:
+        rng = random.Random(sample_seed)
+        sampled = rng.sample(multi_files, sample_size)
+
+    rows: List[List[Any]] = []
+    for p in sampled:
+        try:
+            data = json.loads(p.read_text(encoding='utf-8'))
+        except Exception:
+            continue
+
+        segs = data.get('segments', [])
+        note_id = str(data.get('note_id') or p.stem)
+
+        # Mirror run_batch behavior: skip empty segments for comparisons.
+        filtered = []
+        for idx, seg in enumerate(segs):
+            if seg.get('text', '').strip():
+                filtered.append((idx, seg))
+
+        for comp_idx in range(len(filtered) - 1):
+            orig_i, a_seg = filtered[comp_idx]
+            orig_j, b_seg = filtered[comp_idx + 1]
+            rows.append([
+                note_id,
+                comp_idx,
+                orig_i,
+                orig_j,
+                a_seg.get('date', ''),
+                b_seg.get('date', ''),
+                a_seg.get('text', ''),
+                b_seg.get('text', ''),
+                '',  # diagnostic_shift (annotator)
+                '',  # shift_type (annotator)
+                '',  # annotator_notes
+                str(p),
+            ])
+
+    with open(out_path, 'w', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        writer.writerow([
+            'note_id',
+            'comp_idx',
+            'orig_i',
+            'orig_j',
+            'i_date',
+            'j_date',
+            'segment_i_text',
+            'segment_j_text',
+            'diagnostic_shift',
+            'shift_type',
+            'annotator_notes',
+            'source_json',
+        ])
+        writer.writerows(rows)
+        f.flush()
+        try:
+            os.fsync(f.fileno())
+        except Exception:
+            pass
+
+    summary = {
+        'seg_dir': str(src),
+        'out_csv': str(out_path),
+        'multi_segment_files_total': len(multi_files),
+        'sampled_notes': len(sampled),
+        'sample_size': sample_size,
+        'sample_seed': sample_seed,
+        'rows_written': len(rows),
+    }
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    return summary
+
+
 def _load_aws_config(aws_json_path: str) -> Dict[str, Any]:
     cfg = json.loads(Path(aws_json_path).read_text(encoding='utf-8'))
     return cfg if isinstance(cfg, dict) else {}
@@ -661,6 +758,7 @@ if __name__ == '__main__':
     ap.add_argument('--llm-temperature', type=float, default=0.0, help='LLM temperature')
     ap.add_argument('--llm-max-tokens', type=int, default=300, help='LLM max output tokens')
     ap.add_argument('--llm-sleep-seconds', type=float, default=0.0, help='Sleep between API calls')
+    ap.add_argument('--export-segment-annot-csv', default=None, help='If set, export sampled consecutive segment pairs for human annotation')
     args = ap.parse_args()
 
     if args.export_llm_csv:
@@ -679,6 +777,14 @@ if __name__ == '__main__':
             temperature=args.llm_temperature,
             max_tokens=args.llm_max_tokens,
             sleep_seconds=args.llm_sleep_seconds,
+        )
+        raise SystemExit(0)
+    if args.export_segment_annot_csv:
+        export_segment_pair_annotation_csv(
+            seg_dir=args.seg_dir,
+            out_csv=args.export_segment_annot_csv,
+            sample_size=args.sample_size if args.sample_size is not None else 10,
+            sample_seed=args.sample_seed,
         )
         raise SystemExit(0)
 
