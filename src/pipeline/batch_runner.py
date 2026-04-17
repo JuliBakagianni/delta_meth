@@ -3,9 +3,7 @@ import json
 import csv
 import os
 import random
-from typing import Optional, List
-
-from src.pipeline.run_pipeline import run_pipeline
+from typing import Optional, List, Dict, Any
 
 
 def _ensure_csv_header(path: Path):
@@ -47,6 +45,120 @@ def _write_json_and_flush(path: Path, obj):
             pass
 
 
+def _find_result_jsons(results_dir: Path) -> List[Path]:
+    """Find per-note diagnostic shift JSON outputs inside a directory tree."""
+    if not results_dir.exists():
+        return []
+    preferred = sorted(results_dir.glob('**/*.diagnostic_shifts.json'))
+    if preferred:
+        return preferred
+    return sorted(results_dir.glob('**/*.json'))
+
+
+def _infer_setting_name(results_dir: Path, json_path: Path) -> str:
+    """Infer setting name from path structure for merged multi-setting exports."""
+    try:
+        rel_parts = json_path.relative_to(results_dir).parts
+    except Exception:
+        return "unknown"
+
+    if 'diagnostic_shifts' in rel_parts:
+        idx = rel_parts.index('diagnostic_shifts')
+        if idx > 0:
+            return rel_parts[idx - 1]
+        return "default"
+
+    if len(rel_parts) > 1:
+        return rel_parts[0]
+    return "default"
+
+
+def export_llm_candidates_csv(results_dir: str, out_csv: str) -> Dict[str, Any]:
+    """Export contradiction candidates (one per compared segment-pair) to CSV.
+
+    This reads per-note JSON files produced by `run_batch` and writes rows for
+    comparisons where `comparison["contradiction"]` is not null.
+    """
+    src_root = Path(results_dir)
+    out_path = Path(out_csv)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    files = _find_result_jsons(src_root)
+    rows: List[List[Any]] = []
+    notes_seen = 0
+    bad_files = 0
+
+    for fp in files:
+        try:
+            obj = json.loads(fp.read_text(encoding='utf-8'))
+        except Exception:
+            bad_files += 1
+            continue
+
+        note_id = str(obj.get('note_id') or fp.stem.replace('.diagnostic_shifts', ''))
+        setting = _infer_setting_name(src_root, fp)
+        comparisons = obj.get('comparisons') or []
+        notes_seen += 1
+
+        for comp in comparisons:
+            contradiction = comp.get('contradiction')
+            if not contradiction:
+                continue
+
+            rows.append([
+                setting,
+                note_id,
+                comp.get('comp_idx'),
+                comp.get('orig_i'),
+                comp.get('orig_j'),
+                comp.get('i_date'),
+                comp.get('j_date'),
+                contradiction.get('i'),
+                contradiction.get('j'),
+                contradiction.get('sim_score'),
+                contradiction.get('nli_confidence'),
+                contradiction.get('chunk1'),
+                contradiction.get('chunk2'),
+                str(fp),
+            ])
+
+    with open(out_path, 'w', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        writer.writerow([
+            'setting',
+            'note_id',
+            'comp_idx',
+            'orig_i',
+            'orig_j',
+            'i_date',
+            'j_date',
+            'sent_i',
+            'sent_j',
+            'sim_score',
+            'nli_confidence',
+            'chunk1',
+            'chunk2',
+            'source_json',
+        ])
+        writer.writerows(rows)
+        f.flush()
+        try:
+            os.fsync(f.fileno())
+        except Exception:
+            pass
+
+    summary = {
+        'results_dir': str(src_root),
+        'out_csv': str(out_path),
+        'json_files_found': len(files),
+        'note_files_read': notes_seen,
+        'bad_files': bad_files,
+        'candidate_rows': len(rows),
+    }
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    return summary
+
+
 def run_batch(
     seg_dir: str = 'data/processed/segments',
     out_dir: str = 'data/results/diagnostic_shifts',
@@ -67,6 +179,8 @@ def run_batch(
 
     Returns list of processed note paths.
     """
+    from src.pipeline.run_pipeline import run_pipeline
+
     seg_dir = Path(seg_dir)
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -258,7 +372,14 @@ if __name__ == '__main__':
     ap.add_argument('--translate-nli', action='store_true', help='Translate inputs before NLI')
     ap.add_argument('--translation-model', default=None, help='Seq2seq model name to use for translation')
     ap.add_argument('--auto-subdir', action='store_true', help='Create a subdirectory per configuration under out-dir')
+    ap.add_argument('--export-llm-csv', default=None, help='If set, export contradiction candidates from --results-dir to this CSV and exit')
+    ap.add_argument('--results-dir', default=None, help='Root directory containing per-note diagnostic_shifts JSON outputs (for --export-llm-csv)')
     args = ap.parse_args()
+
+    if args.export_llm_csv:
+        export_src = args.results_dir or args.out_dir
+        export_llm_candidates_csv(results_dir=export_src, out_csv=args.export_llm_csv)
+        raise SystemExit(0)
 
     run_batch(
         seg_dir=args.seg_dir,
