@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import csv
+import gc
 import hashlib
 import json
 import os
@@ -199,6 +200,54 @@ def compute_metrics(y_true: List[str], y_pred: List[str]) -> Dict[str, float]:
     return {"macro_f1": float(macro_f1), "binary_f1": float(binary_f1)}
 
 
+def clear_model_caches() -> None:
+    """Best-effort cleanup to reduce GPU memory pressure between systems."""
+    try:
+        from src.nli import nli_model as _nli_mod
+
+        for obj in list(getattr(_nli_mod, "_models", {}).values()):
+            model = obj.get("model")
+            if model is not None:
+                try:
+                    model.to("cpu")
+                except Exception:
+                    pass
+        for obj in list(getattr(_nli_mod, "_seq2seq_models", {}).values()):
+            model = obj.get("model")
+            if model is not None:
+                try:
+                    model.to("cpu")
+                except Exception:
+                    pass
+        getattr(_nli_mod, "_models", {}).clear()
+        getattr(_nli_mod, "_seq2seq_models", {}).clear()
+    except Exception:
+        pass
+
+    try:
+        from src.alignment import embeddings as _emb_mod
+
+        for obj in list(getattr(_emb_mod, "_embed_models", {}).values()):
+            model = obj.get("model")
+            if model is not None:
+                try:
+                    model.to("cpu")
+                except Exception:
+                    pass
+        getattr(_emb_mod, "_embed_models", {}).clear()
+    except Exception:
+        pass
+
+    gc.collect()
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+
+
 def parse_csv_rows(path: Path) -> List[Dict[str, str]]:
     with path.open("r", encoding="utf-8-sig", newline="") as f:
         return list(csv.DictReader(f))
@@ -262,6 +311,8 @@ def main() -> None:
     ap.add_argument("--temperature", type=float, default=0.0)
     ap.add_argument("--max-tokens", type=int, default=250)
     ap.add_argument("--cache-path", default="results/tuning/llm_cache.json")
+    ap.add_argument("--nli-batch-size", type=int, default=8)
+    ap.add_argument("--translation-batch-size", type=int, default=2)
     args = ap.parse_args()
 
     out_dir = Path(args.out_dir)
@@ -324,6 +375,9 @@ def main() -> None:
                     )
         row_candidates[rid] = pairs
 
+    # Embedding model is no longer needed after candidate extraction.
+    clear_model_caches()
+
     aws_cfg = load_aws_config(args.aws_json)
     llm_model_id = aws_cfg.get("model_id") or args.llm_model_id
     client = build_bedrock_client(aws_cfg)
@@ -360,8 +414,10 @@ def main() -> None:
                 premises,
                 hypotheses,
                 model_name=sys_cfg.nli_model,
+                batch_size=int(args.nli_batch_size),
                 translate=sys_cfg.translate_nli,
                 translation_model=sys_cfg.translation_model,
+                translation_batch_size=int(args.translation_batch_size),
             )
             enriched = []
             for p, (label, conf) in zip(pairs, results):
@@ -437,6 +493,7 @@ def main() -> None:
                 macro_std = float(np.std(fold_macro))
                 binary_mean = float(np.mean(fold_binary))
                 binary_std = float(np.std(fold_binary))
+                full_data = compute_metrics(gt_labels, y_pred)
                 macro_map[(sim_thr, contra_thr)] = macro_mean
                 binary_map[(sim_thr, contra_thr)] = binary_mean
 
@@ -449,6 +506,8 @@ def main() -> None:
                         "cv_macro_f1_std": macro_std,
                         "cv_binary_f1_mean": binary_mean,
                         "cv_binary_f1_std": binary_std,
+                        "full_data_macro_f1": full_data["macro_f1"],
+                        "full_data_binary_f1": full_data["binary_f1"],
                     }
                 )
 
@@ -503,6 +562,7 @@ def main() -> None:
             f"[tuning] {sys_cfg.name} best sim={best['sim_threshold']:.2f}, contra={best['contradiction_threshold']:.2f}, "
             f"macro_f1={best['cv_macro_f1_mean']:.4f}, binary_f1={best['cv_binary_f1_mean']:.4f}"
         )
+        clear_model_caches()
 
     # Save tables.
     cv_path = out_dir / "cv_grid_scores.csv"
@@ -517,6 +577,8 @@ def main() -> None:
                 "cv_macro_f1_std",
                 "cv_binary_f1_mean",
                 "cv_binary_f1_std",
+                "full_data_macro_f1",
+                "full_data_binary_f1",
             ],
         )
         writer.writeheader()
